@@ -1,0 +1,145 @@
+import os
+import time
+import hmac
+import hashlib
+import threading
+import requests
+import pandas as pd
+import ta
+import numpy as np
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# Dummy HTTP server for Render port check
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is active and running fine!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
+    server.serve_forever()
+
+threading.Thread(target=run_dummy_server, daemon=True).start()
+
+# --- CONFIGURATION & API KEYS ---
+# Yahan apni Delta Testnet Key & Secret daalein:
+API_KEY = "YOUR_TESTNET_API_KEY_HERE"
+API_SECRET = "YOUR_TESTNET_API_SECRET_HERE"
+
+BASE_URL = "https://testnet-api.delta.exchange"  # Testnet API URL
+SYMBOL = "ETHUSD_PERP"
+CONTRACT_SIZE = 1  # Contract Quantity for Demo Trade
+
+# Strategy Settings
+ATR_LEN = 14
+VOL_MA_LEN = 20
+EMA_100_LEN = 100
+
+def generate_signature(method, endpoint, payload=""):
+    timestamp = str(int(time.time()))
+    signature_data = method + timestamp + endpoint + payload
+    message = bytes(signature_data, 'utf-8')
+    secret = bytes(API_SECRET, 'utf-8')
+    hash_value = hmac.new(secret, message, hashlib.sha256).hexdigest()
+    return hash_value, timestamp
+
+def place_order(side, size=CONTRACT_SIZE):
+    endpoint = "/v2/orders"
+    url = f"{BASE_URL}{endpoint}"
+    
+    payload = {
+        "product_symbol": SYMBOL,
+        "size": size,
+        "side": side,  # "buy" or "sell"
+        "order_type": "market_order"
+    }
+    
+    import json
+    payload_str = json.dumps(payload)
+    signature, timestamp = generate_signature("POST", endpoint, payload_str)
+    
+    headers = {
+        "api-key": API_KEY,
+        "signature": signature,
+        "timestamp": timestamp,
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.post(url, data=payload_str, headers=headers)
+        if response.status_code == 200 or response.status_code == 201:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] SUCCESS: {side.upper()} order placed successfully!")
+            return response.json()
+        else:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] FAILED Order: {response.text}")
+            return None
+    except Exception as e:
+        print(f"Order exception: {e}")
+        return None
+
+def get_historical_candles():
+    end_time = int(time.time())
+    start_time = end_time - (200 * 15 * 60)
+    
+    endpoint = f"{BASE_URL}/v2/chart/history"
+    params = {
+        "symbol": SYMBOL,
+        "resolution": "15",
+        "from": start_time,
+        "to": end_time
+    }
+
+    try:
+        res = requests.get(endpoint, params=params, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            candles_data = data.get("result", [])
+            if isinstance(candles_data, dict):
+                candles_data = candles_data.get("candles", [])
+            
+            if candles_data:
+                df = pd.DataFrame(candles_data)
+                time_col = 'time' if 'time' in df.columns else 'start_time'
+                df['time'] = pd.to_datetime(df[time_col], unit='s' if df[time_col].iloc[0] < 1e11 else 'ms')
+                df = df.sort_values('time').reset_index(drop=True)
+                return df
+    except Exception as e:
+        print(f"Error fetching candles: {e}")
+    return None
+
+def run_strategy():
+    df = get_historical_candles()
+    if df is None or len(df) < EMA_100_LEN:
+        print("Fetching testnet candles...")
+        return
+
+    df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=ATR_LEN)
+    df['volMa'] = ta.trend.sma_indicator(df['volume'], window=VOL_MA_LEN)
+    df['ema100'] = ta.trend.ema_indicator(df['close'], window=EMA_100_LEN)
+
+    curr = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    # Breakout Logic Example: Close crosses above EMA 100 with High Volume
+    is_breakout_buy = (curr['close'] > curr['ema100']) and (prev['close'] <= prev['ema100']) and (curr['volume'] > curr['volMa'])
+    is_breakout_sell = (curr['close'] < curr['ema100']) and (prev['close'] >= prev['ema100']) and (curr['volume'] > curr['volMa'])
+
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Monitoring Testnet | ETH Price: {curr['close']}")
+
+    if is_breakout_buy:
+        print("BUY Signal Triggered! Executing Market Order...")
+        place_order("buy")
+    elif is_breakout_sell:
+        print("SELL Signal Triggered! Executing Market Order...")
+        place_order("sell")
+
+if __name__ == "__main__":
+    print("Combined Breakout Engine v6 - Testnet Live Trading Active...")
+    while True:
+        try:
+            run_strategy()
+        except Exception as e:
+            print(f"Loop Exception: {e}")
+        time.sleep(60)
