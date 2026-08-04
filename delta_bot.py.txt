@@ -1,0 +1,171 @@
+
+import time
+import requests
+import pandas as pd
+import pandas_ta as ta
+import numpy as np
+
+# ==================== CONFIGURATION ====================
+DELTA_API_KEY = "YOUR_DELTA_API_KEY"
+DELTA_API_SECRET = "YOUR_DELTA_API_SECRET"
+DELTA_BASE_URL = "https://api.delta.exchange" # Use testnet if needed: https://testnet-api.delta.exchange
+
+SYMBOL = "BTCUSD"         # Change as needed (e.g., BTCUSD, ETHUSD)
+TIMEFRAME = "5m"          # Candlestick timeframe
+PRODUCT_ID = 1            # Delta Exchange Product ID for SYMBOL
+
+# Strategy Parameters (Matching your updated settings)
+PIVOT_LEN = 12
+USE_BREAKOUT_BUFFER = False
+BREAKOUT_BUFFER_MULT = 0.2
+
+ATR_LEN = 3
+ATR_MULT = 1.0
+
+USE_VOLUME_FILTER = True
+VOL_MA_LEN = 15
+VOL_MULT = 0.7
+USE_INST_VOL = False
+
+USE_EMA_100 = True
+EMA_100_LEN = 100
+
+USE_ADX = True
+ADX_LEN = 11
+DI_LEN = 11
+ADX_THRESHOLD = 16.0
+
+USE_SQUEEZE = True
+BB_LEN = 20
+BB_MULT = 2.0
+SQUEEZE_THRESHOLD = 1.5
+
+RR_RATIO = 2.0
+SL_ATR_MULT = 2.5
+MAX_SL_POINTS = 16.0
+USE_TIME_BREAKEVEN = True
+TIME_BE_CANDLES = 10
+
+# ==================== HELPER FUNCTIONS ====================
+
+def get_historical_candles(symbol=SYMBOL, resolution=TIMEFRAME, limit=300):
+    """Fetch candles from Delta Exchange API"""
+    endpoint = f"{DELTA_BASE_URL}/v2/ohlc"
+    params = {
+        "symbol": symbol,
+        "resolution": resolution,
+        "limit": limit
+    }
+    res = requests.get(endpoint, params=params)
+    data = res.json()
+    
+    if "result" in data:
+        df = pd.DataFrame(data["result"])
+        df['time'] = pd.to_datetime(df['time'], unit='s')
+        df = df.rename(columns={'open': 'open', 'high': 'high', 'low': 'low', 'close': 'close', 'volume': 'volume'})
+        df = df.sort_values('time').reset_index(drop=True)
+        return df
+    return None
+
+def calculate_pivot_high_low(df, length=12):
+    """Calculate Pivot High and Pivot Low"""
+    df['ph'] = np.nan
+    df['pl'] = np.nan
+    
+    for i in range(length, len(df) - length):
+        high_window = df['high'].iloc[i - length : i + length + 1]
+        if df['high'].iloc[i] == high_window.max():
+            df.at[i, 'ph'] = df['high'].iloc[i]
+            
+        low_window = df['low'].iloc[i - length : i + length + 1]
+        if df['low'].iloc[i] == low_window.min():
+            df.at[i, 'pl'] = df['low'].iloc[i]
+            
+    df['resLevel'] = df['ph'].ffill()
+    df['supLevel'] = df['pl'].ffill()
+    return df
+
+def run_strategy():
+    """Execute strategy checks and generate trade signals"""
+    df = get_historical_candles()
+    if df is None or len(df) < 150:
+        print("Not enough candle data fetched.")
+        return None
+
+    # Indicators
+    df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=ATR_LEN)
+    df['candleRange'] = df['high'] - df['low']
+    df['isStrongCandle'] = df['candleRange'] >= (df['atr'] * ATR_MULT)
+
+    df['volMa'] = ta.sma(df['volume'], length=VOL_MA_LEN)
+    df['isStandardVol'] = df['volume'] >= (df['volMa'] * VOL_MULT)
+    df['isHighVolume'] = df['isStandardVol'] if USE_VOLUME_FILTER else True
+
+    df['ema100'] = ta.ema(df['close'], length=EMA_100_LEN)
+    df['isEma100Bullish'] = df['close'] > df['ema100'] if USE_EMA_100 else True
+    df['isEma100Bearish'] = df['close'] < df['ema100'] if USE_EMA_100 else True
+
+    # ADX Calculation
+    dmi = ta.adx(df['high'], df['low'], df['close'], length=ADX_LEN)
+    df['adx'] = dmi[f'ADX_{ADX_LEN}']
+    df['isAdxValid'] = df['adx'] >= ADX_THRESHOLD if USE_ADX else True
+
+    # Bollinger Bands Squeeze Calculation
+    bb = ta.bbands(df['close'], length=BB_LEN, std=BB_MULT)
+    df['bbMiddle'] = bb[f'BBM_{BB_LEN}_{BB_MULT}']
+    df['bbUpper'] = bb[f'BBU_{BB_LEN}_{BB_MULT}']
+    df['bbLower'] = bb[f'BBL_{BB_LEN}_{BB_MULT}']
+    df['bbWidthPercent'] = ((df['bbUpper'] - df['bbLower']) / df['bbMiddle']) * 100
+    df['isSqueezed'] = (df['bbWidthPercent'].shift(1) <= SQUEEZE_THRESHOLD) | (df['bbWidthPercent'].shift(2) <= SQUEEZE_THRESHOLD) if USE_SQUEEZE else True
+
+    # Pivot High / Low
+    df = calculate_pivot_high_low(df, length=PIVOT_LEN)
+
+    # Latest completed bar
+    curr = df.iloc[-2]
+    prev = df.iloc[-3]
+
+    res_level = curr['resLevel']
+    sup_level = curr['supLevel']
+    buffer_dist = (curr['atr'] * BREAKOUT_BUFFER_MULT) if USE_BREAKOUT_BUFFER else 0.0
+
+    # Signals
+    bullish_break = (pd.notna(res_level) and 
+                     curr['close'] > (res_level + buffer_dist) and 
+                     prev['close'] <= res_level and 
+                     curr['isHighVolume'] and 
+                     curr['isStrongCandle'] and 
+                     curr['isEma100Bullish'] and 
+                     curr['isAdxValid'] and 
+                     curr['isSqueezed'])
+
+    bearish_break = (pd.notna(sup_level) and 
+                     curr['close'] < (sup_level - buffer_dist) and 
+                     prev['close'] >= sup_level and 
+                     curr['isHighVolume'] and 
+                     curr['isStrongCandle'] and 
+                     curr['isEma100Bearish'] and 
+                     curr['isAdxValid'] and 
+                     curr['isSqueezed'])
+
+    if bullish_break:
+        entry = curr['close']
+        sl = entry - (curr['atr'] * SL_ATR_MULT)
+        tp = entry + ((entry - sl) * RR_RATIO)
+        return {"side": "buy", "entry": entry, "sl": sl, "tp": tp}
+
+    if bearish_break:
+        entry = curr['close']
+        sl = entry + (curr['atr'] * SL_ATR_MULT)
+        tp = entry - ((sl - entry) * RR_RATIO)
+        return {"side": "sell", "entry": entry, "sl": sl, "tp": tp}
+
+    return None
+
+if __name__ == "__main__":
+    print("Combined Breakout Engine v6 - Delta Exchange Python Bot Running...")
+    signal = run_strategy()
+    if signal:
+        print(f"SIGNAL DETECTED: {signal}")
+    else:
+        print("No signal on current candle.")
