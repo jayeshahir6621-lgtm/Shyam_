@@ -1,0 +1,119 @@
+import os
+import time
+import requests
+import pandas as pd
+import pandas_ta as ta
+import numpy as np
+
+# Updated Base URLs for Delta Exchange (India & Global)
+BASE_URLS = [
+    "https://api.india.delta.exchange",
+    "https://api.delta.exchange"
+]
+SYMBOL = "BTCUSD"
+
+# Indicator Settings
+ATR_LEN = 14
+ATR_MULT = 1.5
+VOL_MA_LEN = 20
+VOL_MULT = 1.2
+USE_VOLUME_FILTER = True
+
+EMA_100_LEN = 100
+USE_EMA_100 = True
+
+PIVOT_LEN = 12
+
+USE_ADX = True
+ADX_LEN = 11
+ADX_THRESHOLD = 16.0
+
+USE_SQUEEZE = True
+BB_LEN = 20
+BB_MULT = 2.0
+SQUEEZE_THRESHOLD = 1.5
+
+# ==================== HELPER FUNCTIONS ====================
+def get_historical_candles(symbol=SYMBOL, resolution="15", limit=200):
+    """Fetch candles from Delta Exchange API with multiple endpoints"""
+    end_time = int(time.time())
+    start_time = end_time - (limit * 15 * 60)
+    
+    params = {
+        "symbol": symbol,
+        "resolution": resolution,
+        "from": start_time,
+        "to": end_time
+    }
+
+    for base_url in BASE_URLS:
+        endpoint = f"{base_url}/v2/chart/history"
+        try:
+            res = requests.get(endpoint, params=params, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                candles_data = None
+                if "result" in data:
+                    if isinstance(data["result"], list):
+                        candles_data = data["result"]
+                    elif isinstance(data["result"], dict):
+                        candles_data = data["result"].get("candles", data["result"])
+
+                if candles_data and len(candles_data) > 0:
+                    df = pd.DataFrame(candles_data)
+                    time_col = 'time' if 'time' in df.columns else ('start_time' if 'start_time' in df.columns else None)
+                    if time_col:
+                        df['time'] = pd.to_datetime(df[time_col], unit='s' if df[time_col].iloc[0] < 1e11 else 'ms')
+                        df = df.sort_values('time').reset_index(drop=True)
+                        return df
+        except Exception as e:
+            print(f"Error fetching from {base_url}: {e}")
+            continue
+
+    return None
+
+
+def calculate_pivot_high_low(df, length=12):
+    df['ph'] = np.nan
+    df['pl'] = np.nan
+
+    for i in range(length, len(df) - length):
+        high_window = df['high'].iloc[i - length : i + length + 1]
+        if df['high'].iloc[i] == high_window.max():
+            df.at[i, 'ph'] = df['high'].iloc[i]
+
+        low_window = df['low'].iloc[i - length : i + length + 1]
+        if df['low'].iloc[i] == low_window.min():
+            df.at[i, 'pl'] = df['low'].iloc[i]
+
+    df['resLevel'] = df['ph'].ffill()
+    df['supLevel'] = df['pl'].ffill()
+    return df
+
+
+def run_strategy():
+    """Execute strategy checks"""
+    df = get_historical_candles()
+    if df is None or len(df) < 10:
+        print("Not enough candle data fetched from API.")
+        return False
+
+    # Calculate basic indicators
+    df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=ATR_LEN)
+    df['volMa'] = ta.sma(df['volume'], length=VOL_MA_LEN)
+    df['ema100'] = ta.ema(df['close'], length=EMA_100_LEN)
+
+    curr = df.iloc[-1]
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Candle Time: {curr['time']} | Close: {curr['close']}")
+    return True
+
+
+if __name__ == "__main__":
+    print("Combined Breakout Engine v6 - Delta Exchange Python Bot Running...")
+    # Loop continuously so Render doesn't exit early
+    while True:
+        try:
+            run_strategy()
+        except Exception as e:
+            print(f"Error in strategy loop: {e}")
+        time.sleep(60)  # Check every 60 seconds
