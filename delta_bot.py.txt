@@ -71,8 +71,8 @@ def get_historical_candles(symbol=SYMBOL, resolution=TIMEFRAME, limit=300):
     data = res.json()
     if "result" in data:
         candles_data=data["result"].get("candles",data["result"]) if isinstance(data["result"], dict) else data["result"]
-            if candles_data and len(candles_data) > 0:
-                df = pd.DataFrame(candles_data)
+        if candles_data and len(candles_data) > 0:
+            df = pd.DataFrame(candles_data)
             
             # Check time column name safely
             time_col = 'time' if 'time' in df.columns else ('start_time' if 'start_time' in df.columns else None)
