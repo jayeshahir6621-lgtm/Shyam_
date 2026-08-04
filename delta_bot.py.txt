@@ -47,7 +47,7 @@ USE_TIME_BREAKEVEN = True
 TIME_BE_CANDLES = 10
 
 # ==================== HELPER FUNCTIONS ====================
-def get_historical_candles(symbol=SYMBOL, resolution=TIMEFRAME, limit=300):
+def get_historical_candles(symbol=SYMBOL, resolution=TIMEFRAME, limit=500):
     """Fetch candles from Delta Exchange API"""
     endpoint = f"{DELTA_BASE_URL}/v2/chart/history"
     
@@ -106,7 +106,7 @@ def calculate_pivot_high_low(df, length=12):
 def run_strategy():
     """Execute strategy checks and generate trade signals"""
     df = get_historical_candles()
-    if df is None or len(df) < 150:
+    if df is None or len(df) < 50:
         print("Not enough candle data fetched.")
         return None
 
