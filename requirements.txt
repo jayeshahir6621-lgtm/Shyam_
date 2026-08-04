@@ -2,4 +2,3 @@ requests
 pandas
 numpy
 ta
-pandas_ta
