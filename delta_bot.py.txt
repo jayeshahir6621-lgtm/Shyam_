@@ -9,7 +9,7 @@ BASE_URLS = [
     "https://api.india.delta.exchange",
     "https://api.delta.exchange"
 ]
-SYMBOL = "BTCUSD"
+SYMBOL = "ETHUSD_PERP"
 
 # Indicator Settings
 ATR_LEN = 14
