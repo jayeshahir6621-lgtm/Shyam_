@@ -8,10 +8,10 @@ import numpy as np
 # ==================== CONFIGURATION ====================
 DELTA_API_KEY = "YOUR_DELTA_API_KEY"
 DELTA_API_SECRET = "YOUR_DELTA_API_SECRET"
-DELTA_BASE_URL = "https://api.delta.exchange" # Use testnet if needed: https://testnet-api.delta.exchange
+DELTA_BASE_URL =  "https://testnet-api.delta.exchange"
 
 SYMBOL = "BTCUSD"         # Change as needed (e.g., BTCUSD, ETHUSD)
-TIMEFRAME = "5m"          # Candlestick timeframe
+TIMEFRAME = "15m"          # Candlestick timeframe
 PRODUCT_ID = 1            # Delta Exchange Product ID for SYMBOL
 
 # Strategy Parameters (Matching your updated settings)
