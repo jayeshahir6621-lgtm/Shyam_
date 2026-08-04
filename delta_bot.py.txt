@@ -47,25 +47,34 @@ USE_TIME_BREAKEVEN = True
 TIME_BE_CANDLES = 10
 
 # ==================== HELPER FUNCTIONS ====================
-
 def get_historical_candles(symbol=SYMBOL, resolution=TIMEFRAME, limit=300):
     """Fetch candles from Delta Exchange API"""
-    endpoint = f"{DELTA_BASE_URL}/v2/ohlc"
+    # Correct Endpoint & Parameters
+    endpoint = f"{DELTA_BASE_URL}/v2/chart/history"
     params = {
         "symbol": symbol,
         "resolution": resolution,
         "limit": limit
     }
+    
     res = requests.get(endpoint, params=params)
+    
+    if res.status_code != 200:
+        print(f"API Error {res.status_code}: {res.text}")
+    return None
+        
     data = res.json()
     
     if "result" in data:
-        df = pd.DataFrame(data["result"])
-        df['time'] = pd.to_datetime(df['time'], unit='s')
-        df = df.rename(columns={'open': 'open', 'high': 'high', 'low': 'low', 'close': 'close', 'volume': 'volume'})
-        df = df.sort_values('time').reset_index(drop=True)
-        return df
+        candles_data=data["result"].get("candles",data["result"]) if isinstance(data["result"], dict) else data["result"]
+        if candles_data:
+            df = pd.DataFrame(candles_data)
+            df['time'] = pd.to_datetime(df['time'], unit='s' if df['time'].iloc[0] < 1e11 else 'ms')
+            df = df.sort_values('time').reset_index(drop=True)
+            return df
+            
     return None
+
 
 def calculate_pivot_high_low(df, length=12):
     """Calculate Pivot High and Pivot Low"""
