@@ -69,18 +69,22 @@ def get_historical_candles(symbol=SYMBOL, resolution=TIMEFRAME, limit=300):
         return None
 
     data = res.json()
-
     if "result" in data:
-        candles_data =data["result"].get("candles",data["result"]) if isinstance(data["result"],dict) else data["result"]
-        if candles_data:
-            df = pd.DataFrame(candles_data)
-            df['time'] = pd.to_datetime(df['time'], unit='s' if df['time'].iloc[0] < 1e11 else 'ms')
-            df = df.sort_values('time').reset_index(drop=True)
-            return df
+        candles_data=data["result"].get("candles",data["result"]) if isinstance(data["result"], dict) else data["result"]
+            if candles_data and len(candles_data) > 0:
+                df = pd.DataFrame(candles_data)
+            
+            # Check time column name safely
+            time_col = 'time' if 'time' in df.columns else ('start_time' if 'start_time' in df.columns else None)
+            
+            if time_col:
+                df['time'] = pd.to_datetime(df[time_col], unit='s' if df[time_col].iloc[0] < 1e11 else 'ms')
+                df = df.sort_values('time').reset_index(drop=True)
+                return df
 
     return None
 
-
+    
 def calculate_pivot_high_low(df, length=12):
     """Calculate Pivot High and Pivot Low"""
     df['ph'] = np.nan
