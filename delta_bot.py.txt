@@ -49,30 +49,35 @@ TIME_BE_CANDLES = 10
 # ==================== HELPER FUNCTIONS ====================
 def get_historical_candles(symbol=SYMBOL, resolution=TIMEFRAME, limit=300):
     """Fetch candles from Delta Exchange API"""
-    # Correct Endpoint & Parameters
     endpoint = f"{DELTA_BASE_URL}/v2/chart/history"
+    
+    # 15-min candles timestamp calculation (in seconds)
+    end_time = int(time.time())
+    start_time = end_time - (limit * 15 * 60)
+    
     params = {
         "symbol": symbol,
-        "resolution": resolution,
-        "limit": limit
+        "resolution": str(resolution),
+        "from": start_time,
+        "to": end_time
     }
-    
+
     res = requests.get(endpoint, params=params)
-    
+
     if res.status_code != 200:
         print(f"API Error {res.status_code}: {res.text}")
-    return None
-        
+        return None
+
     data = res.json()
-    
+
     if "result" in data:
-        candles_data=data["result"].get("candles",data["result"]) if isinstance(data["result"], dict) else data["result"]
+        candles_data =data["result"].get("candles",data["result"]) if isinstance(data["result"],dict) else data["result"]
         if candles_data:
             df = pd.DataFrame(candles_data)
             df['time'] = pd.to_datetime(df['time'], unit='s' if df['time'].iloc[0] < 1e11 else 'ms')
             df = df.sort_values('time').reset_index(drop=True)
             return df
-            
+
     return None
 
 
